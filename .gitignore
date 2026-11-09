@@ -31,3 +31,10 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### IA ###
+AGENTS.md
+
+### SPRING ###
+src/main/resources/application.properties
+pom.xml
