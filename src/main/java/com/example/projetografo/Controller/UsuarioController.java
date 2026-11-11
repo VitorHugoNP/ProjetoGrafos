@@ -21,12 +21,20 @@ public class UsuarioController {
         this.repository = repository;
     }
 
-    // CREATE
-    @PostMapping
+    @PostMapping("/criar")
     public ResponseEntity<?> criar(@RequestBody Usuario usuario) {
+
+        // tratamento de erros básicos
         if (usuario.getUsername() == null || usuario.getUsername().isBlank()) {
             return ResponseEntity.badRequest().body("username é obrigatório");
         }
+        if (usuario.getNome() == null || usuario.getNome().isBlank()) {
+            return ResponseEntity.badRequest().body("nome do Usuário é obrigatório");
+        }
+        if (usuario.getEmail() == null || usuario.getEmail().isBlank()) {
+            return ResponseEntity.badRequest().body("email é obrigatório");
+        }
+
         if (repository.findByUsername(usuario.getUsername()).isPresent()) {
             return ResponseEntity.status(HttpStatus.CONFLICT)
                     .body("username já existe: " + usuario.getUsername());
@@ -40,7 +48,7 @@ public class UsuarioController {
     }
 
     // READ ALL
-    @GetMapping
+    @GetMapping("listar")
     public List<Usuario> listar() {
         return repository.findAll();
     }
