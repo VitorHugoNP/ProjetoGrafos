@@ -29,4 +29,13 @@ public interface UsuarioRepository extends Neo4jRepository<Usuario, String> {
     @Query("MATCH (u:Usuario {id: $id})-[r:SEGUE]->(s:Usuario {id: $alvoId}) DELETE r")
     void removerSeguindo(String id, String alvoId);
 
+    @Query("MATCH (u:Usuario {id: $id}) - [r:SEGUE*1..2]->(s:Usuario {id: $id}) RETURN r ")
+    List<Usuario> findTalvezConheca(String id);
+
+    @Query("MATCH (u:Usuario {id: $id}) - [r:SEGUE]->(s:Usuario {id: $id}) RETURN COUNT(s)")
+    List<Integer> findSeguindoCount(String id);
+
+    @Query("MATCH (u:Usuario {id: $id})<-[r:SEGUE]-(s:Usuario) RETURN COUNT(r)")
+    Integer findSeguidoresCount(String id);
+
 }
