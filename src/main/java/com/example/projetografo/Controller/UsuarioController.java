@@ -150,4 +150,28 @@ public class UsuarioController {
         return ResponseEntity.ok(repository.findSeguidores(id));
     }
 
+    @GetMapping("/{id}/talvez-conheca")
+    public ResponseEntity<List<Usuario>> talvezConheca(@PathVariable String id) {
+        if (!repository.existsById(id)) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok(repository.findTalvezConheca(id));
+    }
+
+    @GetMapping("/{id}/seguidores-count")
+    public ResponseEntity<Integer> findSeguindoCount(@PathVariable String id) {
+        if (!repository.existsById(id)) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok(repository.findSeguindoCount(id).getFirst());
+    }
+
+    @GetMapping("/{id}/seguidores-count")
+    public ResponseEntity<Integer> findSeguidoresCount(@PathVariable String id) {
+        if (!repository.existsById(id)) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok(repository.findSeguidoresCount(id));
+    }
+
 }
