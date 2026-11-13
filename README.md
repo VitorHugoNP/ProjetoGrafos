@@ -1,7 +1,11 @@
 # ProjetoGrafo
 
-API REST de CRUD sobre um grafo **Neo4j**, com dois domínios: **Produto** e **Usuario**
-(com relacionamento direcionado `:SEGUE` entre usuários).
+API REST de CRUD sobre um grafo **Neo4j**, com o domínio **Usuario**
+(relacionamento direcionado `:SEGUE` entre usuários).
+
+> O domínio **Produto** existiu até o commit `1f79f1c`, que removeu `Produto`,
+> `ProdutoRepository` e `ProdutoController`. Hoje a API só trabalha com `Usuario`;
+> o banco continua se chamando `produtos`.
 
 ---
 
@@ -39,13 +43,10 @@ ProjetoGrafo/
     │   ├── java/com/example/projetografo/
     │   │   ├── ProjetoGrafoApplication.java
     │   │   ├── Model/
-    │   │   │   ├── Produto.java
     │   │   │   └── Usuario.java
     │   │   ├── Repository/
-    │   │   │   ├── ProdutoRepository.java
     │   │   │   └── UsuarioRepository.java
     │   │   └── Controller/
-    │   │       ├── ProdutoController.java
     │   │       └── UsuarioController.java
     │   └── resources/application.properties
     └── test/java/com/example/projetografo/
@@ -101,15 +102,6 @@ No Linux/macOS use `./mvnw`.
 
 ## 5. Modelo de dados
 
-### Produto — label `:Produto`
-
-| Propriedade | Tipo | Observação |
-|---|---|---|
-| `id` | Long | `@Id @GeneratedValue` (id interno do Neo4j, não é propriedade do nó) |
-| `nome` | String | |
-| `preco` | Double | |
-| `categoria` | String | usada na busca por categoria |
-
 ### Usuario — label `:Usuario`
 
 | Propriedade | Tipo | Observação |
@@ -135,23 +127,12 @@ evita recursão infinita quando dois usuários se seguem mutuamente.
 
 ## 6. API REST
 
-### 6.1 Produtos — `/produtos`
+### 6.1 Usuários — `/usuarios`
 
 | Método | Rota | Descrição | Sucesso |
 |---|---|---|---|
-| POST | `/produtos` | cria produto | 200 |
-| GET | `/produtos` | lista todos | 200 |
-| GET | `/produtos/{id}` | busca por id (Long) | 200 / 404 |
-| PUT | `/produtos/{id}` | atualiza (id do corpo é sobrescrito) | 200 / 404 |
-| DELETE | `/produtos/{id}` | remove | 204 / 404 |
-| GET | `/produtos/categoria/{categoria}` | busca por categoria (Cypher customizado) | 200 |
-
-### 6.2 Usuários — `/usuarios`
-
-| Método | Rota | Descrição | Sucesso |
-|---|---|---|---|
-| POST | `/usuarios` | cria usuário (`username` obrigatório e único) | 201 / 400 / 409 |
-| GET | `/usuarios` | lista todos (com `seguindo`) | 200 |
+| POST | `/usuarios/criar` | cria usuário (`username`, `nome` e `email` obrigatórios; `username` único) | 201 / 400 / 409 |
+| GET | `/usuarios/listar` | lista todos (com `seguindo`) | 200 |
 | GET | `/usuarios/{id}` | busca por id (UUID) | 200 / 404 |
 | PUT | `/usuarios/{id}` | atualiza `nome`, `username`, `email` | 200 / 404 / 409 |
 | DELETE | `/usuarios/{id}` | remove o usuário | 204 / 404 |
@@ -159,14 +140,46 @@ evita recursão infinita quando dois usuários se seguem mutuamente.
 | DELETE | `/usuarios/{id}/seguir/{alvoId}` | remove a relação `:SEGUE` | 204 / 404 |
 | GET | `/usuarios/{id}/seguindo` | quem o usuário segue | 200 / 404 |
 | GET | `/usuarios/{id}/seguidores` | quem segue o usuário | 200 / 404 |
+| GET | `/usuarios/{id}/talvez-conheca` | sugestões de conexões (Cypher `[:SEGUE*1..2]`) — **ver §6.2** | 200 / 404 |
+| GET | `/usuarios/{id}/seguidores-count` | contagem de relações — **ver §6.2** | 200 / 404 |
 
 Regras de negócio do `UsuarioController`:
 
-- `username` é obrigatório no POST (400 se ausente).
+- `username`, `nome` e `email` são obrigatórios no POST (400 se ausentes).
 - `username` duplicado retorna **409 Conflict** (POST e PUT).
 - Um usuário não pode seguir a si mesmo (**400**).
 - Remover uma relação inexistente retorna **404**.
 - `seguindo` e `criadoEm` não são aceitos do cliente: são zerados/gerados na criação.
+
+### 6.2 Novidades do último commit (`b191fc4`)
+
+Commit *"Feat: Adiciona novos endpoints para sugestões de conexões e contagem de seguidores"*,
+que alterou apenas o `UsuarioController`. Foram adicionados três métodos — **pendentes de correção**:
+
+| Método | Rota | Método Java | O que tenta fazer |
+|---|---|---|---|
+| GET | `/usuarios/{id}/talvez-conheca` | `talvezConheca` | 404 se o usuário não existe; senão delega a `findTalvezConheca` |
+| GET | `/usuarios/{id}/seguidores-count` | `findSeguindoCount` | 404 se o usuário não existe; senão devolve `findSeguindoCount(id).getFirst()` |
+| GET | `/usuarios/{id}/seguidores-count` | `findSeguidoresCount` | 404 se o usuário não existe; senão devolve `findSeguidoresCount(id)` |
+
+Queries Cypher correspondentes no `UsuarioRepository` (do commit `409c3c6`):
+
+```cypher
+-- findTalvezConheca
+MATCH (u:Usuario {id: $id})-[r:SEGUE*1..2]->(s:Usuario {id: $id}) RETURN r
+
+-- findSeguindoCount -> List<Integer>
+MATCH (u:Usuario {id: $id})-[r:SEGUE]->(s:Usuario {id: $id}) RETURN COUNT(s)
+
+-- findSeguidoresCount -> Integer
+MATCH (u:Usuario {id: $id})<-[r:SEGUE]-(s:Usuario) RETURN COUNT(r)
+```
+
+> ⚠️ **Esses endpoints ainda não funcionam.** Os dois últimos métodos usam exatamente a mesma
+> rota (`/{id}/seguidores-count`), o que gera *Ambiguous mapping* e impede o contexto Spring
+> de subir; além disso, as queries de "talvez conheça" e de contagem de "seguindo" estão
+> incorretas (detalhes no §8, item 7). Nada foi executado/testado — a documentação acima
+> reflete o código como está no commit.
 
 ---
 
@@ -175,11 +188,11 @@ Regras de negócio do `UsuarioController`:
 ### Criar dois usuários
 
 ```powershell
-$ana = Invoke-RestMethod -Method Post -Uri "http://localhost:8080/usuarios" `
+$ana = Invoke-RestMethod -Method Post -Uri "http://localhost:8080/usuarios/criar" `
   -ContentType "application/json" `
   -Body '{"nome":"Ana Silva","username":"ana","email":"ana@exemplo.com"}'
 
-$bruno = Invoke-RestMethod -Method Post -Uri "http://localhost:8080/usuarios" `
+$bruno = Invoke-RestMethod -Method Post -Uri "http://localhost:8080/usuarios/criar" `
   -ContentType "application/json" `
   -Body '{"nome":"Bruno Costa","username":"bruno","email":"bruno@exemplo.com"}'
 ```
@@ -206,6 +219,9 @@ Invoke-RestMethod -Method Post -Uri "http://localhost:8080/usuarios/$($ana.id)/s
 ### Consultar
 
 ```powershell
+# listar todos
+Invoke-RestMethod "http://localhost:8080/usuarios/listar"
+
 # quem Ana segue
 Invoke-RestMethod "http://localhost:8080/usuarios/$($ana.id)/seguindo"
 
@@ -224,18 +240,16 @@ Invoke-RestMethod -Method Put -Uri "http://localhost:8080/usuarios/$($bruno.id)"
 Invoke-WebRequest -Method Delete -Uri "http://localhost:8080/usuarios/$($ana.id)/seguir/$($bruno.id)" -UseBasicParsing
 
 # remover usuário
-Invoke-WebRequest -Method Delete -Uri "http://localhost:8080/usuarios/$id" -UseBasicParsing
+Invoke-WebRequest -Method Delete -Uri "http://localhost:8080/usuarios/$($bruno.id)" -UseBasicParsing
 ```
 
-### Produtos
+### Sugestões e contadores (endpoints do commit `b191fc4`)
+
+> Não devem ser executados ainda: a aplicação não sobe com o mapeamento duplicado (§6.2).
 
 ```powershell
-$p = Invoke-RestMethod -Method Post -Uri "http://localhost:8080/produtos" `
-  -ContentType "application/json" `
-  -Body '{"nome":"Notebook","preco":3500.0,"categoria":"Eletronicos"}'
-
-Invoke-RestMethod "http://localhost:8080/produtos"
-Invoke-RestMethod "http://localhost:8080/produtos/categoria/Eletronicos"
+Invoke-RestMethod "http://localhost:8080/usuarios/$($ana.id)/talvez-conheca"
+Invoke-RestMethod "http://localhost:8080/usuarios/$($bruno.id)/seguidores-count"
 ```
 
 ### Verificação direta no grafo
@@ -253,9 +267,9 @@ MATCH (a:Usuario)-[:SEGUE]->(b:Usuario) RETURN a.username, b.username
    (erro `java.lang.ExceptionInInitializerError: com.sun.tools.javac.tree.EndPosTable`).
    A versão está fixada em `<lombok.version>` no `pom.xml`.
 
-2. **Id do Usuario é UUID (String)** — gerado no controller e persistido no nó.
-   Diferente do `Produto` (Long interno), permite consultas Cypher por `id`
-   (`MATCH (u:Usuario {id: $id})`).
+2. **Id do Usuario é UUID (String)** — gerado no controller e persistido no nó,
+   o que permite consultas Cypher por `id` (`MATCH (u:Usuario {id: $id})`).
+   O antigo `Produto` usava id Long interno (removido em `1f79f1c`).
 
 3. **Remoção de relacionamento usa Cypher explícito** —
    `save()` com a coleção `seguindo` vazia **não** apaga a aresta no Neo4j.
@@ -270,14 +284,30 @@ MATCH (a:Usuario)-[:SEGUE]->(b:Usuario) RETURN a.username, b.username
    Funciona, mas o log mostra o escaneamento de repositories duas vezes.
    O `AGENTS.md` recomenda manter apenas o `data-neo4j`.
 
-5. **Aviso de id interno do Produto** — o Neo4j registra no log que ids Long internos
-   estão deprecated; para novos domínios prefira id externo (UUID), como em `Usuario`.
-
-6. **Sem camada de service e sem validação Bean Validation** — validações são manuais
+5. **Sem camada de service e sem validação Bean Validation** — validações são manuais
    no controller. Não há paginação nem ordenação.
 
-7. **Spring Data REST** — os repositories também são expostos automaticamente pelo
+6. **Spring Data REST** — os repositories também são expostos automaticamente pelo
    starter `data-rest`; os controllers têm precedência nas rotas declaradas.
+
+7. **Endpoints do commit `b191fc4` estão incompletos** (ver §6.2):
+
+   - **Rota duplicada**: `findSeguindoCount` e `findSeguidoresCount` estão ambos em
+     `@GetMapping("/{id}/seguidores-count")`. O Spring falha ao iniciar com
+     *Ambiguous mapping*; o esperado era uma rota para "quantos eu sigo"
+     (ex.: `/{id}/seguindo-count`) e outra para "quantos me seguem".
+   - **`findTalvezConheca`**: o padrão `(u {id: $id})-[r:SEGUE*1..2]->(s {id: $id})` só casa
+     caminhos que começam **e terminam** no próprio usuário (auto-relacionamento), e ainda
+     retorna `r` (relationship) num método que declara `List<Usuario>`. Sugestões de conexão
+     deveriam usar "amigos de amigos" excluindo quem já é seguido, algo como:
+     `MATCH (u:Usuario {id:$id})-[:SEGUE]->(:Usuario)-[:SEGUE]->(s:Usuario)
+      WHERE s.id <> $id AND NOT (u)-[:SEGUE]->(s) RETURN DISTINCT s`.
+   - **`findSeguindoCount`**: exige `s.id = $id`, ou seja, contaria apenas auto-relacionamentos
+     (bloqueados pelo POST com 400) — logo retorna sempre `0`. Deveria ser
+     `MATCH (u:Usuario {id:$id})-[:SEGUE]->(s:Usuario) RETURN COUNT(s)`.
+     O retorno `List<Integer>` (com `.getFirst()` no controller) também é desnecessário;
+     `Integer`/`Long` direto é mais simples.
+   - **`findSeguidoresCount`** é a única das três queries correta.
 
 ---
 
@@ -320,6 +350,9 @@ Relação existente: `(:Usuario {username:"ana"})-[:SEGUE]->(:Usuario {username:
 | `database not found: produtos` | Crie o banco (`CREATE DATABASE produtos`) — requer Neo4j Enterprise. |
 | `409` ao criar usuário | `username` já cadastrado. |
 | `DELETE .../seguir/...` retorna 204 mas a relação continua | Versão antiga do controller usando apenas `save()`; a versão atual usa Cypher explícito. |
+| `Ambiguous mapping ... /usuarios/{id}/seguidores-count` na subida | Dois `@GetMapping` no mesmo path (`findSeguindoCount` e `findSeguidoresCount`) — renomeie um deles (ex.: `/{id}/seguindo-count`). |
+| `GET /usuarios/{id}/talvez-conheca` vazio ou com erro de conversão | Query atual casa só caminhos que voltam ao próprio usuário e retorna relationships — ver §8, item 7. |
+| `GET /usuarios/{id}/seguidores-count` (seguindo) sempre `0` | Query exige `s.id = $id`; sem auto-relacionamento não há resultado — ver §8, item 7. |
 | Porta `8080` ocupada | Encerre o processo anterior ou use `--server.port=8081`. |
 
 ---
@@ -331,3 +364,7 @@ Relação existente: `(:Usuario {username:"ana"})-[:SEGUE]->(:Usuario {username:
 - Criar constraint de unicidade no Neo4j para `Usuario.username`.
 - Testes de integração reais (criar, listar, seguir, deletar) com a infra de teste do SDN.
 - Paginação/filtros nas listagens.
+- Corrigir os endpoints de sugestão/contagem do commit `b191fc4` (§8, item 7) e, se possível,
+  cobri-los com testes.
+- Definir se o domínio `Produto` (removido em `1f79f1c`) volta com outro nome de banco,
+  já que o banco atual ainda se chama `produtos`.
