@@ -140,8 +140,9 @@ evita recursão infinita quando dois usuários se seguem mutuamente.
 | DELETE | `/usuarios/{id}/seguir/{alvoId}` | remove a relação `:SEGUE` | 204 / 404 |
 | GET | `/usuarios/{id}/seguindo` | quem o usuário segue | 200 / 404 |
 | GET | `/usuarios/{id}/seguidores` | quem segue o usuário | 200 / 404 |
-| GET | `/usuarios/{id}/talvez-conheca` | sugestões de conexões (Cypher `[:SEGUE*1..2]`) — **ver §6.2** | 200 / 404 |
-| GET | `/usuarios/{id}/seguidores-count` | contagem de relações — **ver §6.2** | 200 / 404 |
+| GET | `/usuarios/{id}/talvez-conheca` | sugestões de conexões (amigos de amigos que ainda não segue) | 200 / 404 |
+| GET | `/usuarios/{id}/seguindo-count` | quantos usuários o usuário segue (`Long`) | 200 / 404 |
+| GET | `/usuarios/{id}/seguidores-count` | quantos usuários seguem o usuário (`Long`) | 200 / 404 |
 
 Regras de negócio do `UsuarioController`:
 
@@ -151,35 +152,34 @@ Regras de negócio do `UsuarioController`:
 - Remover uma relação inexistente retorna **404**.
 - `seguindo` e `criadoEm` não são aceitos do cliente: são zerados/gerados na criação.
 
-### 6.2 Novidades do último commit (`b191fc4`)
+### 6.2 Sugestões e contadores
 
-Commit *"Feat: Adiciona novos endpoints para sugestões de conexões e contagem de seguidores"*,
-que alterou apenas o `UsuarioController`. Foram adicionados três métodos — **pendentes de correção**:
+Três consultas de leitura sobre o relacionamento `:SEGUE`:
 
-| Método | Rota | Método Java | O que tenta fazer |
+| Método | Rota | Método Java | Descrição |
 |---|---|---|---|
-| GET | `/usuarios/{id}/talvez-conheca` | `talvezConheca` | 404 se o usuário não existe; senão delega a `findTalvezConheca` |
-| GET | `/usuarios/{id}/seguidores-count` | `findSeguindoCount` | 404 se o usuário não existe; senão devolve `findSeguindoCount(id).getFirst()` |
-| GET | `/usuarios/{id}/seguidores-count` | `findSeguidoresCount` | 404 se o usuário não existe; senão devolve `findSeguidoresCount(id)` |
+| GET | `/usuarios/{id}/talvez-conheca` | `talvezConheca` | 404 se o usuário não existe; senão devolve `findTalvezConheca` |
+| GET | `/usuarios/{id}/seguindo-count` | `seguindoCount` | 404 se o usuário não existe; senão devolve `findSeguindoCount(id)` |
+| GET | `/usuarios/{id}/seguidores-count` | `seguidoresCount` | 404 se o usuário não existe; senão devolve `findSeguidoresCount(id)` |
 
-Queries Cypher correspondentes no `UsuarioRepository` (do commit `409c3c6`):
+Queries Cypher no `UsuarioRepository`:
 
 ```cypher
--- findTalvezConheca
-MATCH (u:Usuario {id: $id})-[r:SEGUE*1..2]->(s:Usuario {id: $id}) RETURN r
+-- findTalvezConheca: amigos de amigos que ainda não são seguidos
+MATCH (u:Usuario {id: $id})-[:SEGUE]->(:Usuario)-[:SEGUE]->(s:Usuario)
+WHERE s.id <> $id AND NOT (u)-[:SEGUE]->(s)
+RETURN DISTINCT s
 
--- findSeguindoCount -> List<Integer>
-MATCH (u:Usuario {id: $id})-[r:SEGUE]->(s:Usuario {id: $id}) RETURN COUNT(s)
+-- findSeguindoCount: quantos eu sigo
+MATCH (u:Usuario {id: $id})-[:SEGUE]->(s:Usuario) RETURN COUNT(s)
 
--- findSeguidoresCount -> Integer
-MATCH (u:Usuario {id: $id})<-[r:SEGUE]-(s:Usuario) RETURN COUNT(r)
+-- findSeguidoresCount: quantos me seguem
+MATCH (u:Usuario {id: $id})<-[:SEGUE]-(s:Usuario) RETURN COUNT(s)
 ```
 
-> ⚠️ **Esses endpoints ainda não funcionam.** Os dois últimos métodos usam exatamente a mesma
-> rota (`/{id}/seguidores-count`), o que gera *Ambiguous mapping* e impede o contexto Spring
-> de subir; além disso, as queries de "talvez conheça" e de contagem de "seguindo" estão
-> incorretas (detalhes no §8, item 7). Nada foi executado/testado — a documentação acima
-> reflete o código como está no commit.
+As contagens devolvem `Long` (o `COUNT()` do Cypher é inteiro longo) e são serializadas
+como número no corpo da resposta. `talvez-conheca` só considera caminhos de **dois saltos**:
+usuários a três ou mais conexões de distância não aparecem.
 
 ---
 
@@ -243,13 +243,15 @@ Invoke-WebRequest -Method Delete -Uri "http://localhost:8080/usuarios/$($ana.id)
 Invoke-WebRequest -Method Delete -Uri "http://localhost:8080/usuarios/$($bruno.id)" -UseBasicParsing
 ```
 
-### Sugestões e contadores (endpoints do commit `b191fc4`)
-
-> Não devem ser executados ainda: a aplicação não sobe com o mapeamento duplicado (§6.2).
+### Sugestões e contadores
 
 ```powershell
+# sugestões (amigos de amigos que Ana ainda não segue)
 Invoke-RestMethod "http://localhost:8080/usuarios/$($ana.id)/talvez-conheca"
-Invoke-RestMethod "http://localhost:8080/usuarios/$($bruno.id)/seguidores-count"
+
+# quantos Ana segue / quantos seguem Ana
+Invoke-RestMethod "http://localhost:8080/usuarios/$($ana.id)/seguindo-count"
+Invoke-RestMethod "http://localhost:8080/usuarios/$($ana.id)/seguidores-count"
 ```
 
 ### Verificação direta no grafo
@@ -290,24 +292,16 @@ MATCH (a:Usuario)-[:SEGUE]->(b:Usuario) RETURN a.username, b.username
 6. **Spring Data REST** — os repositories também são expostos automaticamente pelo
    starter `data-rest`; os controllers têm precedência nas rotas declaradas.
 
-7. **Endpoints do commit `b191fc4` estão incompletos** (ver §6.2):
-
-   - **Rota duplicada**: `findSeguindoCount` e `findSeguidoresCount` estão ambos em
-     `@GetMapping("/{id}/seguidores-count")`. O Spring falha ao iniciar com
-     *Ambiguous mapping*; o esperado era uma rota para "quantos eu sigo"
-     (ex.: `/{id}/seguindo-count`) e outra para "quantos me seguem".
-   - **`findTalvezConheca`**: o padrão `(u {id: $id})-[r:SEGUE*1..2]->(s {id: $id})` só casa
-     caminhos que começam **e terminam** no próprio usuário (auto-relacionamento), e ainda
-     retorna `r` (relationship) num método que declara `List<Usuario>`. Sugestões de conexão
-     deveriam usar "amigos de amigos" excluindo quem já é seguido, algo como:
-     `MATCH (u:Usuario {id:$id})-[:SEGUE]->(:Usuario)-[:SEGUE]->(s:Usuario)
-      WHERE s.id <> $id AND NOT (u)-[:SEGUE]->(s) RETURN DISTINCT s`.
-   - **`findSeguindoCount`**: exige `s.id = $id`, ou seja, contaria apenas auto-relacionamentos
-     (bloqueados pelo POST com 400) — logo retorna sempre `0`. Deveria ser
-     `MATCH (u:Usuario {id:$id})-[:SEGUE]->(s:Usuario) RETURN COUNT(s)`.
-     O retorno `List<Integer>` (com `.getFirst()` no controller) também é desnecessário;
-     `Integer`/`Long` direto é mais simples.
-   - **`findSeguidoresCount`** é a única das três queries correta.
+7. **Sugestões e contadores (commit `b191fc4`, corrigido)** — as rotas são separadas
+   (`/{id}/seguindo-count` e `/{id}/seguidores-count`) porque o Spring não aceita duas
+   mappings no mesmo path (*Ambiguous mapping*). As contagens são `COUNT()` simples — sem
+   `List` + `getFirst()` no controller — e retornam `Long`. Em `findTalvezConheca`:
+   - `DISTINCT` é obrigatório — sem ele o mesmo usuário aparece uma vez por caminho;
+   - `NOT (u)-[:SEGUE]->(s)` remove quem já é seguido;
+   - `s.id <> $id` remove o próprio usuário;
+   - o padrão `-[:SEGUE]->(:Usuario)-[:SEGUE]->` limita a busca a dois saltos
+     (equivalente a `*2`, mas sem bind de relationship, que quebrava o mapeamento
+     para `List<Usuario>`).
 
 ---
 
@@ -350,9 +344,9 @@ Relação existente: `(:Usuario {username:"ana"})-[:SEGUE]->(:Usuario {username:
 | `database not found: produtos` | Crie o banco (`CREATE DATABASE produtos`) — requer Neo4j Enterprise. |
 | `409` ao criar usuário | `username` já cadastrado. |
 | `DELETE .../seguir/...` retorna 204 mas a relação continua | Versão antiga do controller usando apenas `save()`; a versão atual usa Cypher explícito. |
-| `Ambiguous mapping ... /usuarios/{id}/seguidores-count` na subida | Dois `@GetMapping` no mesmo path (`findSeguindoCount` e `findSeguidoresCount`) — renomeie um deles (ex.: `/{id}/seguindo-count`). |
-| `GET /usuarios/{id}/talvez-conheca` vazio ou com erro de conversão | Query atual casa só caminhos que voltam ao próprio usuário e retorna relationships — ver §8, item 7. |
-| `GET /usuarios/{id}/seguidores-count` (seguindo) sempre `0` | Query exige `s.id = $id`; sem auto-relacionamento não há resultado — ver §8, item 7. |
+| `Ambiguous mapping ... /usuarios/{id}/...` na subida | Dois `@GetMapping` no mesmo path. As contagens já usam rotas distintas (`seguindo-count` × `seguidores-count`). |
+| `GET .../talvez-conheca` retorna `[]` com o grafo populado | Esperado quando não há caminho de **dois saltos** (A → B → C) ou quando o candidato já é seguido; a query não olha 3+ saltos. |
+| `GET .../seguindo-count` ou `.../seguidores-count` retorna `0` | Usuário sem relações na direção consultada (ou usuário inexistente, que dá 404). |
 | Porta `8080` ocupada | Encerre o processo anterior ou use `--server.port=8081`. |
 
 ---
@@ -364,7 +358,39 @@ Relação existente: `(:Usuario {username:"ana"})-[:SEGUE]->(:Usuario {username:
 - Criar constraint de unicidade no Neo4j para `Usuario.username`.
 - Testes de integração reais (criar, listar, seguir, deletar) com a infra de teste do SDN.
 - Paginação/filtros nas listagens.
-- Corrigir os endpoints de sugestão/contagem do commit `b191fc4` (§8, item 7) e, se possível,
-  cobri-los com testes.
+- Limitar (`LIMIT 10`) e ordenar por conexões em comum as sugestões de `talvez-conheca`;
+  hoje ela devolve todos os candidatos de dois saltos em ordem arbitrária.
+- Testes de integração para `talvez-conheca`, `seguindo-count` e `seguidores-count`
+  (usuário inexistente → 404, sem relações → `0`, e sugestão não incluindo quem já é seguido).
 - Definir se o domínio `Produto` (removido em `1f79f1c`) volta com outro nome de banco,
   já que o banco atual ainda se chama `produtos`.
+
+---
+
+## 13. Coleção Postman
+
+A coleção **ProjetoGrafo API** fica em `postman/collections/ProjetoGrafo API/` (formato
+v3, um YAML por request) e aparece automaticamente no **Local View** do Postman, já que
+o `postman/` está registrado no `.postman/resources.yaml` deste repositório.
+
+Variáveis da coleção: `baseUrl` (`http://localhost:8080`), `usuarioId` e `alvoId`
+(vêm preenchidos com `ana` e `bruno`; os requests de criação sobrescrevem via script).
+
+| Pasta | Requests |
+|---|---|
+| `Usuarios` | Listar, Buscar, Criar, Criar alvo, Atualizar |
+| `Relacionamentos` | Seguir, Deixar de seguir, Quem eu sigo, Quem me segue |
+| `Sugestoes e contadores` | Talvez conheca, Quantos eu sigo, Quantos me seguem |
+| `Limpeza` | Remover usuario, Remover usuario alvo |
+
+Cada request tem exemplo de resposta e asserção de status. Rodando na ordem das pastas,
+`Criar usuario`/`Criar usuario alvo` preenchem os ids, as consultas usam esses ids e
+`Limpeza` apaga os dois usuários criados.
+
+```powershell
+# validar o YAML
+postman collection lint "postman/collections/ProjetoGrafo API"
+
+# executar a coleção inteira contra a aplicação no ar
+postman collection run "postman/collections/ProjetoGrafo API"
+```

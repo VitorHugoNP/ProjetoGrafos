@@ -158,16 +158,18 @@ public class UsuarioController {
         return ResponseEntity.ok(repository.findTalvezConheca(id));
     }
 
-    @GetMapping("/{id}/seguidores-count")
-    public ResponseEntity<Integer> findSeguindoCount(@PathVariable String id) {
+    // RELACIONAMENTO: quantos usuários este usuário segue
+    @GetMapping("/{id}/seguindo-count")
+    public ResponseEntity<Long> seguindoCount(@PathVariable String id) {
         if (!repository.existsById(id)) {
             return ResponseEntity.notFound().build();
         }
-        return ResponseEntity.ok(repository.findSeguindoCount(id).getFirst());
+        return ResponseEntity.ok(repository.findSeguindoCount(id));
     }
 
+    // RELACIONAMENTO: quantos usuários seguem este usuário
     @GetMapping("/{id}/seguidores-count")
-    public ResponseEntity<Integer> findSeguidoresCount(@PathVariable String id) {
+    public ResponseEntity<Long> seguidoresCount(@PathVariable String id) {
         if (!repository.existsById(id)) {
             return ResponseEntity.notFound().build();
         }

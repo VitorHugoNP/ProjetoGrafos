@@ -29,13 +29,28 @@ public interface UsuarioRepository extends Neo4jRepository<Usuario, String> {
     @Query("MATCH (u:Usuario {id: $id})-[r:SEGUE]->(s:Usuario {id: $alvoId}) DELETE r")
     void removerSeguindo(String id, String alvoId);
 
-    @Query("MATCH (u:Usuario {id: $id}) - [r:SEGUE*1..2]->(s:Usuario {id: $id}) RETURN r ")
+    /**
+     * Sugestões de conexão: amigos de amigos que o usuário ainda não segue.
+     * Sem DISTINCT o mesmo usuário apareceria uma vez por caminho.
+     */
+    @Query("""
+            MATCH (u:Usuario {id: $id})-[:SEGUE]->(:Usuario)-[:SEGUE]->(s:Usuario)
+            WHERE s.id <> $id
+              AND NOT (u)-[:SEGUE]->(s)
+            RETURN DISTINCT s
+            """)
     List<Usuario> findTalvezConheca(String id);
 
-    @Query("MATCH (u:Usuario {id: $id}) - [r:SEGUE]->(s:Usuario {id: $id}) RETURN COUNT(s)")
-    List<Integer> findSeguindoCount(String id);
+    /**
+     * Quantos usuários este usuário segue.
+     */
+    @Query("MATCH (u:Usuario {id: $id})-[:SEGUE]->(s:Usuario) RETURN COUNT(s)")
+    Long findSeguindoCount(String id);
 
-    @Query("MATCH (u:Usuario {id: $id})<-[r:SEGUE]-(s:Usuario) RETURN COUNT(r)")
-    Integer findSeguidoresCount(String id);
+    /**
+     * Quantos usuários seguem este usuário.
+     */
+    @Query("MATCH (u:Usuario {id: $id})<-[:SEGUE]-(s:Usuario) RETURN COUNT(s)")
+    Long findSeguidoresCount(String id);
 
 }
